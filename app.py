@@ -14,7 +14,7 @@ from werkzeug.utils import secure_filename
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from config import Config
 from utils.image_utils import preprocess_image, save_image, generate_grid_visualization
-from utils.report_generator import generate_classification_report, generate_purification_report
+from utils.report_generator import generate_classification_report, generate_purification_report, generate_attack_report
 from models.classifier import AdversarialClassifier
 from models.purifier import Generator, PatchDiscriminator
 from models.attack_generator import fgsm_attack, bim_attack, pgd_attack
@@ -184,14 +184,16 @@ def classify_image():
         
         # Perform classification
         with torch.no_grad():
-            # Handle both return types (dict or tensor)
+            # Get full outputs including attention weights
             outputs = classifier(image_tensor)
             
             # Check if the output is a dictionary (training mode) or tensor (eval mode)
             if isinstance(outputs, dict):
                 logits = outputs['logits']
+                attention_weights = outputs.get('attention_weights', None)
             else:
                 logits = outputs
+                attention_weights = None
                 
             probabilities = torch.nn.functional.softmax(logits, dim=1)[0]
             prediction = torch.argmax(probabilities).item()
@@ -205,13 +207,19 @@ def classify_image():
         
         # Save results to session
         result_id = str(uuid.uuid4())
-        session.results[result_id] = {
+        result_data = {
             'operation': 'classification',
             'predicted_class': predicted_class,
             'probabilities': probs,
             'class_names': class_names,
             'timestamp': time.time()
         }
+        
+        # Add attention weights if available
+        if attention_weights is not None:
+            result_data['attention_weights'] = attention_weights.cpu().numpy().tolist()
+        
+        session.results[result_id] = result_data
         
         # Create result directory
         report_dir = os.path.join(app.config['REPORT_FOLDER'])
@@ -221,7 +229,7 @@ def classify_image():
         report_path = os.path.join(report_dir, f"{result_id}_classification_report.pdf")
         report_url = f"/download_report/{session_id}/{result_id}/classification"
         
-        result_data = {
+        report_data = {
             'filename': session.upload_filename,
             'predicted_class': predicted_class,
             'probabilities': probs,
@@ -230,15 +238,19 @@ def classify_image():
             'report_url': report_url
         }
         
+        # Add attention weights to report data if available
+        if attention_weights is not None:
+            report_data['attention_weights'] = attention_weights.cpu().numpy().tolist()
+        
         # Generate report with error handling
         try:
             generate_classification_report(
                 image_path=session.upload_path,
-                result_data=result_data,
+                result_data=report_data,
                 output_path=report_path
             )
         except Exception as e:
-            print(f"Warning: Error generating classification report: {e}")
+            print(f"Warning: Error generating classification report: {str(e)}")
             # Continue without the report - we'll return success even if the report fails
         
         return jsonify({
@@ -345,7 +357,7 @@ def purify_image():
                 output_path=report_path
             )
         except Exception as e:
-            print(f"Warning: Error generating purification report: {e}")
+            print(f"Warning: Error generating purification report: {str(e)}")
             # Continue without the report
         
         return jsonify({
@@ -446,14 +458,16 @@ def attack_image():
         
         # Also classify the adversarial image
         with torch.no_grad():
-            # Handle both return types (dict or tensor)
+            # Get full outputs including attention weights
             adv_outputs = classifier(adversarial_tensor)
             
             # Check if the output is a dictionary (training mode) or tensor (eval mode)
             if isinstance(adv_outputs, dict):
                 adv_logits = adv_outputs['logits']
+                attention_weights = adv_outputs.get('attention_weights', None)
             else:
                 adv_logits = adv_outputs
+                attention_weights = None
                 
             adv_probabilities = torch.nn.functional.softmax(adv_logits, dim=1)[0]
             adv_prediction = torch.argmax(adv_probabilities).item()
@@ -462,6 +476,17 @@ def attack_image():
         class_names = ['Clean', 'FGSM', 'BIM', 'PGD']
         adv_predicted_class = class_names[adv_prediction]
         adv_probs = adv_probabilities.cpu().numpy().tolist()
+        
+        # Prepare classification results for report
+        classification_results = {
+            'predicted_class': adv_predicted_class,
+            'probabilities': adv_probs,
+            'class_names': class_names
+        }
+        
+        # Add attention weights if available
+        if attention_weights is not None:
+            classification_results['attention_weights'] = attention_weights.cpu().numpy().tolist()
         
         # Save results to session
         session.results[result_id] = {
@@ -484,6 +509,21 @@ def attack_image():
         
         report_path = os.path.join(report_dir, f"{result_id}_attack_report.pdf")
         report_url = f"/download_report/{session_id}/{result_id}/attack"
+        
+        # Generate attack report with error handling
+        try:
+            generate_attack_report(
+                original_path=session.upload_path,
+                adversarial_path=adversarial_path,
+                comparison_path=comparison_path,
+                attack_params={'attack_type': attack_type, 'epsilon': epsilon},
+                metrics={'l2_distance': l2_distance, 'linf_distance': linf_distance},
+                classification_results=classification_results,
+                output_path=report_path
+            )
+        except Exception as e:
+            print(f"Warning: Error generating attack report: {str(e)}")
+            # Continue without the report
         
         return jsonify({
             'success': True,
@@ -600,4 +640,4 @@ def cleanup_old_sessions():
         del sessions[session_id]
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000) 
+    app.run(debug=True, host='0.0.0.0', port=5000)
