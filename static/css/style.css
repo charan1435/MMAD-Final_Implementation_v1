@@ -1,0 +1,222 @@
+/* Main Styles for Adversarial MRI Defense System */
+
+/* Global Styles */
+:root {
+    --primary: #0d6efd;
+    --secondary: #6c757d;
+    --success: #198754;
+    --danger: #dc3545;
+    --warning: #ffc107;
+    --info: #0dcaf0;
+    --light: #f8f9fa;
+    --dark: #212529;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f8f9fa;
+    color: #212529;
+}
+
+/* Feature Icons */
+.feature-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 4rem;
+    height: 4rem;
+    border-radius: 50%;
+}
+
+/* Card Styles */
+.card {
+    border-radius: 0.5rem;
+    overflow: hidden;
+    transition: transform 0.3s, box-shadow 0.3s;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+    background-color: rgba(0, 0, 0, 0.03);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.125);
+}
+
+/* Dropzone Customization */
+.dropzone {
+    border: 2px dashed var(--primary);
+    border-radius: 0.5rem;
+    background: white;
+    min-height: 200px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.3s, background-color 0.3s;
+}
+
+.dropzone:hover {
+    background-color: rgba(13, 110, 253, 0.05);
+    border-color: var(--primary);
+}
+
+.dropzone .dz-message {
+    margin: 2em 0;
+    color: #6c757d;
+}
+
+.dropzone .dz-preview .dz-image {
+    border-radius: 10px;
+}
+
+/* Result Alert Styling */
+#result-alert.clean-result {
+    background-color: rgba(25, 135, 84, 0.15);
+    color: var(--success);
+    border-left: 4px solid var(--success);
+}
+
+#result-alert.fgsm-result {
+    background-color: rgba(220, 53, 69, 0.15);
+    color: var(--danger);
+    border-left: 4px solid var(--danger);
+}
+
+#result-alert.bim-result {
+    background-color: rgba(255, 193, 7, 0.15);
+    color: #856404;
+    border-left: 4px solid var(--warning);
+}
+
+#result-alert.pgd-result {
+    background-color: rgba(13, 202, 240, 0.15);
+    color: var(--info);
+    border-left: 4px solid var(--info);
+}
+
+/* Progress Bar Animation */
+.progress-bar {
+    transition: width 1s ease;
+}
+
+/* Image Containers */
+.image-container, .comparison-container {
+    background-color: white;
+    border-radius: 0.5rem;
+    padding: 15px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.image-container img, .comparison-container img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Button Styles */
+.btn {
+    border-radius: 0.375rem;
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background-color: var(--primary);
+    border-color: var(--primary);
+}
+
+.btn-primary:hover {
+    background-color: #0b5ed7;
+    border-color: #0a58ca;
+}
+
+.btn-danger {
+    background-color: var(--danger);
+    border-color: var(--danger);
+}
+
+.btn-danger:hover {
+    background-color: #bb2d3b;
+    border-color: #b02a37;
+}
+
+.btn-outline-primary, .btn-outline-success, .btn-outline-danger {
+    font-weight: 500;
+}
+
+/* Spinner Animation */
+@keyframes spinner {
+    to {transform: rotate(360deg);}
+}
+
+.spinner-border {
+    display: inline-block;
+    width: 2.5rem;
+    height: 2.5rem;
+    vertical-align: text-bottom;
+    border: 0.25em solid var(--primary);
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spinner 0.75s linear infinite;
+}
+
+.spinner-border.text-danger {
+    border-color: var(--danger);
+    border-right-color: transparent;
+}
+
+/* Navbar Customization */
+.navbar {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.navbar-brand {
+    font-weight: 600;
+    font-size: 1.3rem;
+}
+
+.nav-link {
+    font-weight: 500;
+}
+
+/* Metrics Cards */
+.metrics-card .metric-item, .attack-details .detail-item {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.metrics-card .metric-item:last-child, .attack-details .detail-item:last-child {
+    border-bottom: none;
+}
+
+/* Footer */
+.footer {
+    margin-top: 2rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .card {
+        margin-bottom: 1.5rem;
+    }
+    
+    .feature-icon {
+        width: 3rem;
+        height: 3rem;
+    }
+    
+    .feature-icon i {
+        font-size: 1.5rem !important;
+    }
+    
+    h1 {
+        font-size: 2rem;
+    }
+    
+    .lead {
+        font-size: 1rem;
+    }
+}
