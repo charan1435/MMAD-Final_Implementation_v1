@@ -67,10 +67,10 @@ def generate_classification_report(image_path, result_data, output_path):
                 # Save to a temporary BytesIO object
                 img_byte_arr = io.BytesIO()
                 img.save(img_byte_arr, format='JPEG')
-                img_byte_arr = img_byte_arr.getvalue()
+                img_byte_arr.seek(0)  # Reset position to start of stream
                 
-                # Add image to PDF
-                pdf.image(io.BytesIO(img_byte_arr), x=55, y=None, w=100)
+                # Add image to PDF with explicit type
+                pdf.image(img_byte_arr, x=55, y=None, w=100, type='JPEG')
                 pdf.ln(110)  # Space after image
             else:
                 pdf.cell(0, 10, "Unable to include image in report", 0, 1)
@@ -116,15 +116,76 @@ def generate_classification_report(image_path, result_data, output_path):
             plot_byte_arr = io.BytesIO()
             plt.savefig(plot_byte_arr, format='PNG')
             plt.close()
-            plot_byte_arr = plot_byte_arr.getvalue()
+            plot_byte_arr.seek(0)  # Reset position to start of stream
             
-            # Add plot to PDF
-            pdf.image(io.BytesIO(plot_byte_arr), x=20, y=None, w=170)
+            # Add plot to PDF with explicit type
+            pdf.image(plot_byte_arr, x=20, y=None, w=170, type='PNG')
         except Exception as e:
             pdf.cell(0, 10, f"Error generating probability chart: {str(e)}", 0, 1)
         
+        # Add model contribution chart if available
+        if 'attention_weights' in result_data:
+            try:
+                pdf.ln(100)  # Space after previous chart
+                pdf.set_font('Arial', 'B', 14)
+                pdf.cell(0, 10, "Model Contributions", 0, 1)
+                pdf.ln(5)
+                
+                # Extract model contributions
+                model_names = ['Transformer', 'CNN', 'SNN']
+                contributions = result_data['attention_weights']
+                
+                # Create bar chart for model contributions
+                plt.figure(figsize=(8, 4))
+                bars = plt.bar(model_names, contributions, color=['#FF9999', '#66B2FF', '#99FF99'])
+                
+                # Add value labels above bars
+                for bar in bars:
+                    height = bar.get_height()
+                    plt.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                             f'{height:.2f}', ha='center', va='bottom', fontweight='bold')
+                
+                # Highlight the model with highest contribution
+                highest_idx = np.argmax(contributions)
+                bars[highest_idx].set_color('gold')
+                bars[highest_idx].set_edgecolor('black')
+                
+                plt.xlabel('Model Component')
+                plt.ylabel('Contribution Weight')
+                plt.title('Contribution of Each Model Component to Classification')
+                plt.ylim(0, max(contributions) + 0.2)
+                
+                # Add a caption for the highest contributor
+                plt.figtext(0.5, 0.01, f'Highest Contribution: {model_names[highest_idx]} ({contributions[highest_idx]:.2f})',
+                           ha='center', fontsize=12, fontweight='bold')
+                
+                # Save plot to a temporary BytesIO object
+                contrib_plot = io.BytesIO()
+                plt.savefig(contrib_plot, format='PNG')
+                plt.close()
+                contrib_plot.seek(0)  # Reset position to start of stream
+                
+                # Add contribution plot to PDF with explicit type
+                pdf.image(contrib_plot, x=20, y=None, w=170, type='PNG')
+                
+                # Add explanation of model contributions
+                pdf.ln(80)  # Space after chart
+                pdf.set_font('Arial', 'B', 12)
+                pdf.cell(0, 10, "Model Contribution Analysis:", 0, 1)
+                
+                pdf.set_font('Arial', '', 10)
+                contribution_explanation = (
+                    f"The classification was primarily driven by the {model_names[highest_idx]} component "
+                    f"with a contribution weight of {contributions[highest_idx]:.2f}. This indicates that "
+                    f"the {model_names[highest_idx]} features were most informative for this particular sample."
+                )
+                pdf.multi_cell(0, 10, contribution_explanation)
+                
+            except Exception as e:
+                pdf.cell(0, 10, f"Error generating model contribution chart: {str(e)}", 0, 1)
+        
         # Add interpretation
-        pdf.ln(100)  # Space after chart
+        pdf.ln(10)  # Space after previous content
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(0, 10, "Interpretation:", 0, 1)
         
@@ -208,10 +269,10 @@ def generate_purification_report(original_path, purified_path, comparison_path, 
                 # Save to a temporary BytesIO object
                 img_byte_arr = io.BytesIO()
                 img.save(img_byte_arr, format='JPEG')
-                img_byte_arr = img_byte_arr.getvalue()
+                img_byte_arr.seek(0)  # Reset position to start of stream
                 
-                # Add image to PDF
-                pdf.image(io.BytesIO(img_byte_arr), x=10, y=None, w=190)
+                # Add image to PDF with explicit type
+                pdf.image(img_byte_arr, x=10, y=None, w=190, type='JPEG')
                 pdf.ln(100)  # Space after image
             else:
                 pdf.cell(0, 10, "Comparison image not available", 0, 1)
@@ -297,4 +358,185 @@ def generate_purification_report(original_path, purified_path, comparison_path, 
         return output_path
     except Exception as e:
         print(f"Error in generate_purification_report: {str(e)}")
+        return None
+
+def generate_attack_report(original_path, adversarial_path, comparison_path, 
+                          attack_params, metrics, classification_results, output_path):
+    """
+    Generate a PDF report for adversarial attack results
+    
+    Args:
+        original_path (str): Path to the original image
+        adversarial_path (str): Path to the adversarial image
+        comparison_path (str): Path to the comparison visualization
+        attack_params (dict): Attack parameters (type, epsilon, etc.)
+        metrics (dict): Attack metrics (L2 distance, Linf distance)
+        classification_results (dict): Results of classifying the adversarial image
+        output_path (str): Path to save the PDF report
+    """
+    try:
+        # Create PDF object
+        pdf = PDF()
+        pdf.add_page()
+        
+        # Title
+        pdf.set_font('Arial', 'B', 16)
+        pdf.cell(0, 10, 'MRI Adversarial Attack Generation Report', 0, 1, 'C')
+        pdf.ln(5)
+        
+        # Timestamp
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(0, 10, f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 0, 1)
+        pdf.ln(5)
+        
+        # Image filename
+        pdf.set_font('Arial', 'B', 12)
+        if isinstance(original_path, str) and os.path.exists(original_path):
+            pdf.cell(0, 10, f"Original Image: {os.path.basename(original_path)}", 0, 1)
+        else:
+            pdf.cell(0, 10, "Original image", 0, 1)
+        pdf.ln(5)
+        
+        # Add comparison image
+        try:
+            if isinstance(comparison_path, str) and os.path.exists(comparison_path):
+                img = Image.open(comparison_path)
+                img = img.resize((400, 200), Image.LANCZOS)
+                # Save to a temporary BytesIO object
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format='JPEG')
+                img_byte_arr.seek(0)  # Reset position to start of stream
+                
+                # Add image to PDF with explicit type
+                pdf.image(img_byte_arr, x=10, y=None, w=190, type='JPEG')
+                pdf.ln(100)  # Space after image
+            else:
+                pdf.cell(0, 10, "Comparison image not available", 0, 1)
+                pdf.ln(5)
+                
+        except Exception as e:
+            pdf.cell(0, 10, f"Error adding comparison image: {str(e)}", 0, 1)
+            pdf.ln(5)
+        
+        # Attack details
+        pdf.set_font('Arial', 'B', 14)
+        pdf.cell(0, 10, "Attack Details", 0, 1)
+        pdf.ln(5)
+        
+        # Attack type
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(60, 10, "Attack Type:", 0, 0)
+        pdf.set_font('Arial', '', 12)
+        pdf.cell(0, 10, attack_params['attack_type'].upper(), 0, 1)
+        
+        # Epsilon
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(60, 10, "Epsilon (ε):", 0, 0)
+        pdf.set_font('Arial', '', 12)
+        pdf.cell(0, 10, f"{attack_params['epsilon']:.4f}", 0, 1)
+        pdf.ln(5)
+        
+        # Attack metrics
+        pdf.set_font('Arial', 'B', 14)
+        pdf.cell(0, 10, "Attack Metrics", 0, 1)
+        pdf.ln(5)
+        
+        # L2 distance
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(60, 10, "L2 Distance:", 0, 0)
+        pdf.set_font('Arial', '', 12)
+        pdf.cell(0, 10, f"{metrics['l2_distance']:.4f}", 0, 1)
+        
+        # Linf distance
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(60, 10, "L∞ Distance:", 0, 0)
+        pdf.set_font('Arial', '', 12)
+        pdf.cell(0, 10, f"{metrics['linf_distance']:.4f}", 0, 1)
+        pdf.ln(5)
+        
+        # Classification results of adversarial image
+        pdf.set_font('Arial', 'B', 14)
+        pdf.cell(0, 10, "Adversarial Image Classification", 0, 1)
+        pdf.ln(5)
+        
+        # Predicted class
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(60, 10, "Predicted Class:", 0, 0)
+        pdf.set_font('Arial', '', 12)
+        pdf.cell(0, 10, classification_results['predicted_class'], 0, 1)
+        pdf.ln(5)
+        
+        # Confidence scores
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, "Confidence Scores:", 0, 1)
+        
+        pdf.set_font('Arial', '', 10)
+        for i, (class_name, prob) in enumerate(zip(classification_results['class_names'], 
+                                                classification_results['probabilities'])):
+            pdf.cell(40, 10, class_name, 1, 0, 'L')
+            pdf.cell(40, 10, f"{prob*100:.2f}%", 1, 1, 'R')
+        
+        pdf.ln(10)
+        
+        # Create bar chart for classification probabilities
+        try:
+            plt.figure(figsize=(8, 4))
+            plt.bar(classification_results['class_names'], classification_results['probabilities'], color='skyblue')
+            plt.xlabel('Class')
+            plt.ylabel('Probability')
+            plt.title('Adversarial Image Classification Results')
+            plt.ylim(0, 1)
+            
+            # Save plot to a temporary BytesIO object
+            plot_byte_arr = io.BytesIO()
+            plt.savefig(plot_byte_arr, format='PNG')
+            plt.close()
+            plot_byte_arr.seek(0)  # Reset position to start of stream
+            
+            # Add plot to PDF with explicit type
+            pdf.image(plot_byte_arr, x=20, y=None, w=170, type='PNG')
+        except Exception as e:
+            pdf.cell(0, 10, f"Error generating probability chart: {str(e)}", 0, 1)
+        
+        pdf.ln(80)  # Space after chart
+        
+        # Description of the attack
+        pdf.set_font('Arial', 'B', 14)
+        pdf.cell(0, 10, "Attack Description", 0, 1)
+        pdf.ln(5)
+        
+        pdf.set_font('Arial', '', 10)
+        attack_descriptions = {
+            'fgsm': (
+                "Fast Gradient Sign Method (FGSM) is a one-step attack that generates adversarial examples by perturbing the input "
+                "in the direction of the gradient of the loss function with respect to the input. It's a fast but relatively "
+                "simple attack that often produces noticeable perturbations."
+            ),
+            'bim': (
+                "Basic Iterative Method (BIM) is an iterative version of FGSM that applies smaller changes over multiple iterations. "
+                "This typically results in more effective adversarial examples with less visible perturbation compared to FGSM."
+            ),
+            'pgd': (
+                "Projected Gradient Descent (PGD) is considered one of the strongest first-order adversarial attacks. "
+                "It works by starting from a random point within the allowed perturbation range and then iteratively "
+                "taking gradient steps, projecting back onto the allowed perturbation range after each step. "
+                "This typically creates stronger adversarial examples than FGSM or BIM."
+            )
+        }
+        
+        pdf.multi_cell(0, 10, attack_descriptions.get(attack_params['attack_type'], 
+                                                "No description available for this attack type."))
+        
+        # Save PDF
+        try:
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            pdf.output(output_path)
+            print(f"Successfully generated attack report at {output_path}")
+        except Exception as e:
+            print(f"Error saving PDF report: {str(e)}")
+            
+        return output_path
+    except Exception as e:
+        print(f"Error in generate_attack_report: {str(e)}")
         return None
