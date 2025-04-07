@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Purify - Adversarial MRI Defense System</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/min/dropzone.min.css"
+    />
+  </head>
+  <body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+      <div class="container">
+        <a class="navbar-brand" href="{{ url_for('index') }}">
+          <i class="fas fa-shield-alt me-2"></i> Adversarial MRI Defense
+        </a>
+        <button
+          class="navbar-toggler"
+          type="button"
+          data-bs-toggle="collapse"
+          data-bs-target="#navbarNav"
+        >
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+          <ul class="navbar-nav ms-auto">
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('index') }}">
+                <i class="fas fa-home"></i> Home
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('classify') }}">
+                <i class="fas fa-search"></i> Classify
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link active" href="{{ url_for('purify') }}">
+                <i class="fas fa-broom"></i> Purify
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('attack') }}">
+                <i class="fas fa-virus"></i> Attack
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container">
+      <div class="row mb-4">
+        <div class="col-md-12 text-center">
+          <h1>
+            <i class="fas fa-broom text-primary me-3"></i>Adversarial
+            Purification
+          </h1>
+          <p class="lead">
+            Remove adversarial perturbations from MRI images while preserving
+            diagnostic features
+          </p>
+        </div>
+      </div>
+
+      <div class="row justify-content-center mb-5">
+        <div class="col-md-10">
+          <div class="card shadow-lg border-0">
+            <div class="card-body p-4">
+              <h4 class="card-title text-center mb-4">Image Purification</h4>
+
+              <!-- Upload Section -->
+              <div id="upload-section" class="mb-4">
+                <form
+                  id="uploadForm"
+                  action="/upload"
+                  class="dropzone"
+                  id="dropzone-upload"
+                >
+                  <div class="dz-message">
+                    <i
+                      class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"
+                    ></i>
+                    <h5>Drop adversarial MRI image here or click to upload</h5>
+                    <p class="text-muted">
+                      Supported formats: PNG, JPG, JPEG, TIF, BMP
+                    </p>
+                  </div>
+                </form>
+                <div class="text-center mt-3">
+                  <button id="purify-btn" class="btn btn-primary" disabled>
+                    <i class="fas fa-broom me-2"></i> Purify Image
+                  </button>
+                </div>
+              </div>
+
+              <!-- Processing Section -->
+              <div id="processing-section" class="text-center d-none">
+                <div class="spinner-border text-primary" role="status">
+                  <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-3">
+                  Processing and purifying image, please wait...
+                </p>
+              </div>
+
+              <!-- Results Section -->
+              <div id="results-section" class="d-none">
+                <div class="row">
+                  <div class="col-md-12 mb-4">
+                    <div class="comparison-container text-center">
+                      <h5 class="mb-3">Image Comparison</h5>
+                      <img
+                        id="comparison-image"
+                        class="img-fluid rounded border shadow-sm"
+                        alt="Comparison of original and purified images"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="metrics-card card mb-3">
+                      <div class="card-header">
+                        <h6 class="mb-0">Purification Metrics</h6>
+                      </div>
+                      <div class="card-body">
+                        <div
+                          class="metric-item d-flex justify-content-between mb-2"
+                        >
+                          <span
+                            ><i class="fas fa-chart-line me-2"></i> PSNR:</span
+                          >
+                          <span id="psnr-value" class="fw-bold">0.00 dB</span>
+                        </div>
+                        <div class="metric-item d-flex justify-content-between">
+                          <span
+                            ><i class="fas fa-vector-square me-2"></i>
+                            SSIM:</span
+                          >
+                          <span id="ssim-value" class="fw-bold">0.000</span>
+                        </div>
+                        <div class="metric-desc mt-3">
+                          <p class="small text-muted mb-1">
+                            <strong>PSNR</strong> (Peak Signal-to-Noise Ratio):
+                            Higher values indicate better image quality
+                          </p>
+                          <p class="small text-muted mb-0">
+                            <strong>SSIM</strong> (Structural Similarity Index):
+                            Values closer to 1 indicate better structural
+                            preservation
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="download-card card mb-3">
+                      <div class="card-header">
+                        <h6 class="mb-0">Download Options</h6>
+                      </div>
+                      <div class="card-body">
+                        <div class="d-grid gap-2">
+                          <a
+                            id="download-purified"
+                            href="#"
+                            class="btn btn-outline-primary"
+                          >
+                            <i class="fas fa-download me-2"></i> Download
+                            Purified Image
+                          </a>
+                          <a
+                            id="generate-report-btn"
+                            href="#"
+                            class="btn btn-outline-success"
+                            target="_blank"
+                          >
+                            <i class="fas fa-file-pdf me-2"></i> Download
+                            Purification Report
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="row mt-3">
+                  <div class="col-md-12 text-center">
+                    <button id="new-purify-btn" class="btn btn-primary">
+                      <i class="fas fa-plus-circle me-2"></i> Purify Another
+                      Image
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Technical Information -->
+      <div class="row mb-5">
+        <div class="col-md-12">
+          <div class="card shadow border-0">
+            <div class="card-body p-4">
+              <h4 class="text-center mb-4">
+                About Our Purification Technology
+              </h4>
+              <div class="row">
+                <div class="col-md-6 mb-3">
+                  <h5>
+                    <i class="fas fa-code me-2 text-primary"></i> Model
+                    Architecture
+                  </h5>
+                  <p>
+                    Our purification model uses a U-Net-based architecture with
+                    self-attention mechanisms, allowing it to effectively focus
+                    on and restore important diagnostic features while removing
+                    adversarial perturbations. The model includes:
+                  </p>
+                  <ul class="mb-4">
+                    <li>Self-attention layers at multiple scales</li>
+                    <li>Residual connections for stable training</li>
+                    <li>Channel and spatial attention mechanisms</li>
+                    <li>Multi-scale feature fusion for preserving details</li>
+                  </ul>
+                </div>
+                <div class="col-md-6 mb-3">
+                  <h5>
+                    <i class="fas fa-graduation-cap me-2 text-primary"></i>
+                    Training Methodology
+                  </h5>
+                  <p>
+                    The purification model was trained in a two-phase process:
+                  </p>
+                  <ol class="mb-0">
+                    <li>
+                      <strong>Phase 1:</strong> Training with pixel-wise and
+                      perceptual losses to learn the mapping from adversarial to
+                      clean images.
+                    </li>
+                    <li>
+                      <strong>Phase 2:</strong> GAN-based fine-tuning with a
+                      PatchGAN discriminator for improved visual quality,
+                      sharpness, and detail preservation.
+                    </li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer mt-auto py-3 bg-light">
+      <div class="container text-center">
+        <span class="text-muted">Adversarial MRI Defense System © 2025</span>
+      </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/min/dropzone.min.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/purify.js') }}"></script>
+  </body>
+</html>
