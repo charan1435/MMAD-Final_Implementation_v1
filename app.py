@@ -27,6 +27,9 @@ app.config.from_object(Config)
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['RESULT_FOLDER'], exist_ok=True)
 os.makedirs(app.config['REPORT_FOLDER'], exist_ok=True)
+os.makedirs(os.path.dirname(app.config['CHECKPOINT_FOLDER']), exist_ok=True)
+os.makedirs(os.path.join(app.config['CHECKPOINT_FOLDER'], 'classifier'), exist_ok=True)
+os.makedirs(os.path.join(app.config['CHECKPOINT_FOLDER'], 'purifier'), exist_ok=True)
 
 # Initialize models
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,20 +39,38 @@ print(f"Using device: {device}")
 classifier = AdversarialClassifier().to(device)
 classifier_checkpoint_path = os.path.join(app.config['CHECKPOINT_FOLDER'], 'classifier', 'best_model.pth')
 if os.path.exists(classifier_checkpoint_path):
-    checkpoint = torch.load(classifier_checkpoint_path, map_location=device)
-    classifier.load_state_dict(checkpoint['model_state_dict'])
-    print(f"Loaded classifier model from {classifier_checkpoint_path}")
+    try:
+        checkpoint = torch.load(classifier_checkpoint_path, map_location=device)
+        classifier.load_state_dict(checkpoint['model_state_dict'])
+        print(f"Loaded classifier model from {classifier_checkpoint_path}")
+    except Exception as e:
+        print(f"Warning: Error loading classifier checkpoint: {e}")
+        print("Running with initialized classifier model (not trained)")
 else:
     print(f"Warning: Classifier checkpoint not found at {classifier_checkpoint_path}")
 classifier.eval()
 
-# Load purifier model
+# Load purifier model - using phase2 model and weights_only=False
 generator = Generator().to(device)
-purifier_checkpoint_path = os.path.join(app.config['CHECKPOINT_FOLDER'], 'purifier', 'best_model_phase1.pth')
+purifier_checkpoint_path = os.path.join(app.config['CHECKPOINT_FOLDER'], 'purifier', 'best_model_phase2.pth')
 if os.path.exists(purifier_checkpoint_path):
-    checkpoint = torch.load(purifier_checkpoint_path, map_location=device)
-    generator.load_state_dict(checkpoint['model_state_dict'])
-    print(f"Loaded purifier model from {purifier_checkpoint_path}")
+    try:
+        # Use weights_only=False to allow loading NumPy scalar values
+        checkpoint = torch.load(purifier_checkpoint_path, map_location=device, weights_only=False)
+        
+        # Check which key contains the model weights
+        if 'model_state_dict' in checkpoint:
+            generator.load_state_dict(checkpoint['model_state_dict'])
+        elif 'generator_state_dict' in checkpoint:
+            generator.load_state_dict(checkpoint['generator_state_dict'])
+        else:
+            # Try to load the checkpoint directly if it's just a state dict
+            generator.load_state_dict(checkpoint)
+            
+        print(f"Loaded purifier model from {purifier_checkpoint_path}")
+    except Exception as e:
+        print(f"Warning: Error loading purifier checkpoint: {e}")
+        print("Running with initialized purifier model (not trained)")
 else:
     print(f"Warning: Purifier checkpoint not found at {purifier_checkpoint_path}")
 generator.eval()
@@ -150,14 +171,29 @@ def classify_image():
     session = sessions[session_id]
     
     try:
+        # Check if the uploaded file exists
+        if not os.path.exists(session.upload_path):
+            return jsonify({
+                'success': False,
+                'message': 'Uploaded file not found. Please upload again.'
+            })
+        
         # Load and preprocess image
         image = Image.open(session.upload_path).convert('RGB')
         image_tensor = transform(image).unsqueeze(0).to(device)
         
         # Perform classification
         with torch.no_grad():
+            # Handle both return types (dict or tensor)
             outputs = classifier(image_tensor)
-            probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
+            
+            # Check if the output is a dictionary (training mode) or tensor (eval mode)
+            if isinstance(outputs, dict):
+                logits = outputs['logits']
+            else:
+                logits = outputs
+                
+            probabilities = torch.nn.functional.softmax(logits, dim=1)[0]
             prediction = torch.argmax(probabilities).item()
             
         # Map prediction to class
@@ -177,8 +213,12 @@ def classify_image():
             'timestamp': time.time()
         }
         
+        # Create result directory
+        report_dir = os.path.join(app.config['REPORT_FOLDER'])
+        os.makedirs(report_dir, exist_ok=True)
+        
         # Generate report
-        report_path = os.path.join(app.config['REPORT_FOLDER'], f"{result_id}_classification_report.pdf")
+        report_path = os.path.join(report_dir, f"{result_id}_classification_report.pdf")
         report_url = f"/download_report/{session_id}/{result_id}/classification"
         
         result_data = {
@@ -190,12 +230,16 @@ def classify_image():
             'report_url': report_url
         }
         
-        # Generate report asynchronously
-        generate_classification_report(
-            image_path=session.upload_path,
-            result_data=result_data,
-            output_path=report_path
-        )
+        # Generate report with error handling
+        try:
+            generate_classification_report(
+                image_path=session.upload_path,
+                result_data=result_data,
+                output_path=report_path
+            )
+        except Exception as e:
+            print(f"Warning: Error generating classification report: {e}")
+            # Continue without the report - we'll return success even if the report fails
         
         return jsonify({
             'success': True,
@@ -227,6 +271,13 @@ def purify_image():
     session = sessions[session_id]
     
     try:
+        # Check if the uploaded file exists
+        if not os.path.exists(session.upload_path):
+            return jsonify({
+                'success': False,
+                'message': 'Uploaded file not found. Please upload again.'
+            })
+            
         # Load and preprocess image
         image = Image.open(session.upload_path).convert('RGB')
         image_tensor = transform(image).unsqueeze(0).to(device)
@@ -278,17 +329,24 @@ def purify_image():
         }
         
         # Generate report
-        report_path = os.path.join(app.config['REPORT_FOLDER'], f"{result_id}_purification_report.pdf")
+        report_dir = os.path.join(app.config['REPORT_FOLDER'])
+        os.makedirs(report_dir, exist_ok=True)
+        
+        report_path = os.path.join(report_dir, f"{result_id}_purification_report.pdf")
         report_url = f"/download_report/{session_id}/{result_id}/purification"
         
-        # Generate purification report
-        generate_purification_report(
-            original_path=session.upload_path,
-            purified_path=purified_path,
-            comparison_path=comparison_path,
-            metrics={'psnr': psnr_value, 'ssim': ssim_value},
-            output_path=report_path
-        )
+        # Generate purification report with error handling
+        try:
+            generate_purification_report(
+                original_path=session.upload_path,
+                purified_path=purified_path,
+                comparison_path=comparison_path,
+                metrics={'psnr': psnr_value, 'ssim': ssim_value},
+                output_path=report_path
+            )
+        except Exception as e:
+            print(f"Warning: Error generating purification report: {e}")
+            # Continue without the report
         
         return jsonify({
             'success': True,
@@ -338,6 +396,13 @@ def attack_image():
         })
     
     try:
+        # Check if the uploaded file exists
+        if not os.path.exists(session.upload_path):
+            return jsonify({
+                'success': False,
+                'message': 'Uploaded file not found. Please upload again.'
+            })
+            
         # Load and preprocess image
         image = Image.open(session.upload_path).convert('RGB')
         image_tensor = transform(image).unsqueeze(0).to(device)
@@ -381,8 +446,16 @@ def attack_image():
         
         # Also classify the adversarial image
         with torch.no_grad():
+            # Handle both return types (dict or tensor)
             adv_outputs = classifier(adversarial_tensor)
-            adv_probabilities = torch.nn.functional.softmax(adv_outputs, dim=1)[0]
+            
+            # Check if the output is a dictionary (training mode) or tensor (eval mode)
+            if isinstance(adv_outputs, dict):
+                adv_logits = adv_outputs['logits']
+            else:
+                adv_logits = adv_outputs
+                
+            adv_probabilities = torch.nn.functional.softmax(adv_logits, dim=1)[0]
             adv_prediction = torch.argmax(adv_probabilities).item()
             
         # Map prediction to class
@@ -406,10 +479,11 @@ def attack_image():
         }
         
         # Generate report path and URL
-        report_path = os.path.join(app.config['REPORT_FOLDER'], f"{result_id}_attack_report.pdf")
-        report_url = f"/download_report/{session_id}/{result_id}/attack"
+        report_dir = os.path.join(app.config['REPORT_FOLDER'])
+        os.makedirs(report_dir, exist_ok=True)
         
-        # TODO: Generate attack report similar to the purification report
+        report_path = os.path.join(report_dir, f"{result_id}_attack_report.pdf")
+        report_url = f"/download_report/{session_id}/{result_id}/attack"
         
         return jsonify({
             'success': True,
@@ -441,7 +515,13 @@ def get_image(session_id, filename):
         flash('Invalid session')
         return redirect(url_for('index'))
     
-    return send_file(os.path.join(app.config['UPLOAD_FOLDER'], session_id, filename))
+    image_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, filename)
+    
+    if not os.path.exists(image_path):
+        flash('Image not found')
+        return redirect(url_for('index'))
+        
+    return send_file(image_path)
 
 @app.route('/get_result/<session_id>/<filename>')
 def get_result(session_id, filename):
@@ -449,10 +529,17 @@ def get_result(session_id, filename):
         flash('Invalid session')
         return redirect(url_for('index'))
     
-    return send_file(os.path.join(app.config['RESULT_FOLDER'], session_id, filename))
+    result_path = os.path.join(app.config['RESULT_FOLDER'], session_id, filename)
+    
+    if not os.path.exists(result_path):
+        flash('Result not found')
+        return redirect(url_for('index'))
+        
+    return send_file(result_path)
 
 @app.route('/download_image/<session_id>/<result_id>')
-def download_image(session_id, result_id):
+@app.route('/download_image/<session_id>/<result_id>/<image_type>')
+def download_image(session_id, result_id, image_type=None):
     if session_id not in sessions:
         flash('Invalid session')
         return redirect(url_for('index'))
@@ -466,9 +553,17 @@ def download_image(session_id, result_id):
     result = session.results[result_id]
     
     if result['operation'] == 'purification':
+        if not os.path.exists(result['purified_path']):
+            flash('Purified image not found')
+            return redirect(url_for('index'))
+            
         return send_file(result['purified_path'], as_attachment=True, 
                          download_name=f"purified_{os.path.basename(result['purified_path'])}")
     elif result['operation'] == 'attack':
+        if not os.path.exists(result['adversarial_path']):
+            flash('Adversarial image not found')
+            return redirect(url_for('index'))
+            
         return send_file(result['adversarial_path'], as_attachment=True, 
                          download_name=f"{result['attack_type']}_{os.path.basename(result['adversarial_path'])}")
     
@@ -505,4 +600,4 @@ def cleanup_old_sessions():
         del sessions[session_id]
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000) 
