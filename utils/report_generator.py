@@ -28,6 +28,91 @@ class PDF(FPDF):
         # Date
         self.cell(0, 10, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 0, 0, 'R')
 
+def convert_image_for_report(img_source, max_size=(400, 400)):
+    """
+    Convert any image source to a format suitable for PDF reports.
+    Handles RGBA conversion to RGB and resizing.
+    Returns a BytesIO object with the image data.
+    """
+    try:
+        # Open the image if it's a file path
+        if isinstance(img_source, str) and os.path.exists(img_source):
+            img = Image.open(img_source)
+        elif isinstance(img_source, Image.Image):
+            img = img_source
+        else:
+            # If it's already a BytesIO or similar object, just use it
+            img = Image.open(img_source)
+        
+        # Convert RGBA to RGB if needed
+        if img.mode == 'RGBA':
+            white_background = Image.new('RGB', img.size, (255, 255, 255))
+            white_background.paste(img, mask=img.split()[3])  # Use alpha channel as mask
+            img = white_background
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Resize while maintaining aspect ratio
+        img.thumbnail(max_size, Image.LANCZOS)
+        
+        # Save to BytesIO
+        img_byte_arr = io.BytesIO()
+        img.save(img_byte_arr, format='PNG')  # Use PNG to maintain quality
+        img_byte_arr.seek(0)  # Reset position to start of stream
+        
+        return img_byte_arr
+    
+    except Exception as e:
+        print(f"Error converting image: {str(e)}")
+        # Return a placeholder image in case of error
+        placeholder = create_placeholder_image()
+        return placeholder
+
+def create_placeholder_image(size=(300, 300), color=(200, 200, 200)):
+    """Create a simple placeholder image when actual images can't be loaded"""
+    img = Image.new('RGB', size, color)
+    draw = getattr(Image, 'Draw', lambda x: x)(img)
+    
+    # Add text if PIL.ImageDraw is available
+    if hasattr(draw, 'text'):
+        draw.text((size[0]//3, size[1]//2), "Image Not Available", fill=(100, 100, 100))
+    
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format='PNG')
+    img_byte_arr.seek(0)
+    
+    return img_byte_arr
+
+def add_image_to_pdf(pdf, img_source, x=None, y=None, w=0, h=0, title=None):
+    """Safely add an image to a PDF document with error handling"""
+    try:
+        # Convert the image to proper format for PDF
+        img_data = convert_image_for_report(img_source)
+        
+        # Add title if provided
+        if title:
+            pdf.set_font('Arial', 'B', 12)
+            pdf.cell(0, 10, title, 0, 1, 'C')
+        
+        # Add image to PDF
+        pdf.image(img_data, x=x, y=y, w=w, h=h, type='PNG')
+        
+        # Add some space after the image
+        if y is None:  # If y is auto-positioned
+            pdf.ln(h if h > 0 else 10)  # Space after image
+        
+        return True
+    
+    except Exception as e:
+        # Log error and add text message instead
+        print(f"Error adding image to PDF: {str(e)}")
+        pdf.set_text_color(255, 0, 0)
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(0, 10, f"Error adding image: {str(e)}", 0, 1)
+        pdf.set_text_color(0, 0, 0)  # Reset text color
+        pdf.ln(5)
+        return False
+
 def generate_classification_report(image_path, result_data, output_path):
     """
     Generate a PDF report for image classification results
@@ -57,28 +142,8 @@ def generate_classification_report(image_path, result_data, output_path):
         pdf.cell(0, 10, f"Image: {result_data['filename']}", 0, 1)
         pdf.ln(5)
         
-        # Add original image
-        try:
-            # Make sure we're dealing with a file path, not a BytesIO object
-            if isinstance(image_path, str) and os.path.exists(image_path):
-                img = Image.open(image_path)
-                img = img.resize((300, 300), Image.LANCZOS)
-                
-                # Save to a temporary BytesIO object
-                img_byte_arr = io.BytesIO()
-                img.save(img_byte_arr, format='JPEG')
-                img_byte_arr.seek(0)  # Reset position to start of stream
-                
-                # Add image to PDF with explicit type
-                pdf.image(img_byte_arr, x=55, y=None, w=100, type='JPEG')
-                pdf.ln(110)  # Space after image
-            else:
-                pdf.cell(0, 10, "Unable to include image in report", 0, 1)
-                pdf.ln(5)
-                
-        except Exception as e:
-            pdf.cell(0, 10, f"Error adding image to report: {str(e)}", 0, 1)
-            pdf.ln(5)
+        # Add original image with error handling
+        add_image_to_pdf(pdf, image_path, x=55, w=100, title="Original Image")
         
         # Classification results
         pdf.set_font('Arial', 'B', 14)
@@ -118,24 +183,18 @@ def generate_classification_report(image_path, result_data, output_path):
             plt.close()
             plot_byte_arr.seek(0)  # Reset position to start of stream
             
-            # Add plot to PDF with explicit type
-            pdf.image(plot_byte_arr, x=20, y=None, w=170, type='PNG')
+            # Add plot to PDF
+            add_image_to_pdf(pdf, plot_byte_arr, w=170)
         except Exception as e:
             pdf.cell(0, 10, f"Error generating probability chart: {str(e)}", 0, 1)
         
         # Add model contribution chart if available
         if 'attention_weights' in result_data:
             try:
-                pdf.ln(100)  # Space after previous chart
-                pdf.set_font('Arial', 'B', 14)
-                pdf.cell(0, 10, "Model Contributions", 0, 1)
-                pdf.ln(5)
-                
-                # Extract model contributions
+                # Create bar chart for model contributions
                 model_names = ['Transformer', 'CNN', 'SNN']
                 contributions = result_data['attention_weights']
                 
-                # Create bar chart for model contributions
                 plt.figure(figsize=(8, 4))
                 bars = plt.bar(model_names, contributions, color=['#FF9999', '#66B2FF', '#99FF99'])
                 
@@ -166,10 +225,9 @@ def generate_classification_report(image_path, result_data, output_path):
                 contrib_plot.seek(0)  # Reset position to start of stream
                 
                 # Add contribution plot to PDF with explicit type
-                pdf.image(contrib_plot, x=20, y=None, w=170, type='PNG')
+                add_image_to_pdf(pdf, contrib_plot, w=170, title="Model Contributions")
                 
                 # Add explanation of model contributions
-                pdf.ln(80)  # Space after chart
                 pdf.set_font('Arial', 'B', 12)
                 pdf.cell(0, 10, "Model Contribution Analysis:", 0, 1)
                 
@@ -262,25 +320,12 @@ def generate_purification_report(original_path, purified_path, comparison_path, 
         pdf.ln(5)
         
         # Add comparison image
-        try:
-            if isinstance(comparison_path, str) and os.path.exists(comparison_path):
-                img = Image.open(comparison_path)
-                img = img.resize((400, 200), Image.LANCZOS)
-                # Save to a temporary BytesIO object
-                img_byte_arr = io.BytesIO()
-                img.save(img_byte_arr, format='JPEG')
-                img_byte_arr.seek(0)  # Reset position to start of stream
-                
-                # Add image to PDF with explicit type
-                pdf.image(img_byte_arr, x=10, y=None, w=190, type='JPEG')
-                pdf.ln(100)  # Space after image
-            else:
-                pdf.cell(0, 10, "Comparison image not available", 0, 1)
-                pdf.ln(5)
-                
-        except Exception as e:
-            pdf.cell(0, 10, f"Error adding comparison image: {str(e)}", 0, 1)
-            pdf.ln(5)
+        add_image_to_pdf(
+            pdf, 
+            comparison_path, 
+            w=190, 
+            title="Comparison: Original (left) vs. Purified (right)"
+        )
         
         # Purification metrics
         pdf.set_font('Arial', 'B', 14)
@@ -398,25 +443,12 @@ def generate_attack_report(original_path, adversarial_path, comparison_path,
         pdf.ln(5)
         
         # Add comparison image
-        try:
-            if isinstance(comparison_path, str) and os.path.exists(comparison_path):
-                img = Image.open(comparison_path)
-                img = img.resize((400, 200), Image.LANCZOS)
-                # Save to a temporary BytesIO object
-                img_byte_arr = io.BytesIO()
-                img.save(img_byte_arr, format='JPEG')
-                img_byte_arr.seek(0)  # Reset position to start of stream
-                
-                # Add image to PDF with explicit type
-                pdf.image(img_byte_arr, x=10, y=None, w=190, type='JPEG')
-                pdf.ln(100)  # Space after image
-            else:
-                pdf.cell(0, 10, "Comparison image not available", 0, 1)
-                pdf.ln(5)
-                
-        except Exception as e:
-            pdf.cell(0, 10, f"Error adding comparison image: {str(e)}", 0, 1)
-            pdf.ln(5)
+        add_image_to_pdf(
+            pdf, 
+            comparison_path, 
+            w=190, 
+            title=f"Comparison: Original (left) vs. {attack_params['attack_type'].upper()} (right)"
+        )
         
         # Attack details
         pdf.set_font('Arial', 'B', 14)
@@ -493,12 +525,66 @@ def generate_attack_report(original_path, adversarial_path, comparison_path,
             plt.close()
             plot_byte_arr.seek(0)  # Reset position to start of stream
             
-            # Add plot to PDF with explicit type
-            pdf.image(plot_byte_arr, x=20, y=None, w=170, type='PNG')
+            # Add plot to PDF
+            add_image_to_pdf(pdf, plot_byte_arr, w=170)
         except Exception as e:
             pdf.cell(0, 10, f"Error generating probability chart: {str(e)}", 0, 1)
         
-        pdf.ln(80)  # Space after chart
+        # Add model contribution chart if available
+        if 'attention_weights' in classification_results:
+            try:
+                # Create bar chart for model contributions
+                model_names = ['Transformer', 'CNN', 'SNN']
+                contributions = classification_results['attention_weights']
+                
+                plt.figure(figsize=(8, 4))
+                bars = plt.bar(model_names, contributions, color=['#FF9999', '#66B2FF', '#99FF99'])
+                
+                # Add value labels above bars
+                for bar in bars:
+                    height = bar.get_height()
+                    plt.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                             f'{height:.2f}', ha='center', va='bottom', fontweight='bold')
+                
+                # Highlight the model with highest contribution
+                highest_idx = np.argmax(contributions)
+                bars[highest_idx].set_color('gold')
+                bars[highest_idx].set_edgecolor('black')
+                
+                plt.xlabel('Model Component')
+                plt.ylabel('Contribution Weight')
+                plt.title('Contribution to Adversarial Classification')
+                plt.ylim(0, max(contributions) + 0.2)
+                
+                # Add a caption for the highest contributor
+                plt.figtext(0.5, 0.01, f'Highest Contribution: {model_names[highest_idx]} ({contributions[highest_idx]:.2f})',
+                           ha='center', fontsize=12, fontweight='bold')
+                
+                # Save plot to a temporary BytesIO object
+                contrib_plot = io.BytesIO()
+                plt.savefig(contrib_plot, format='PNG')
+                plt.close()
+                contrib_plot.seek(0)  # Reset position to start of stream
+                
+                # Add contribution plot to PDF with explicit type
+                add_image_to_pdf(pdf, contrib_plot, w=170, title="Model Contributions")
+                
+                # Add explanation of model contributions
+                pdf.set_font('Arial', 'B', 12)
+                pdf.cell(0, 10, "Model Contribution Analysis:", 0, 1)
+                
+                pdf.set_font('Arial', '', 10)
+                contribution_explanation = (
+                    f"The classification of this adversarial image was primarily driven by the {model_names[highest_idx]} component "
+                    f"with a contribution weight of {contributions[highest_idx]:.2f}. This indicates that "
+                    f"the {model_names[highest_idx]} features were most informative for detecting this particular attack."
+                )
+                pdf.multi_cell(0, 10, contribution_explanation)
+                
+            except Exception as e:
+                pdf.cell(0, 10, f"Error generating model contribution chart: {str(e)}", 0, 1)
+        
+        pdf.ln(10)  # Space after chart
         
         # Description of the attack
         pdf.set_font('Arial', 'B', 14)
