@@ -31,4 +31,7 @@ class Config:
     
     # Application name and version
     APP_NAME = 'Adversarial MRI Defense'
-    APP_VERSION = '1.0.0'
+    APP_VERSION = '1.0.0' 
+
+     # MRI Validator settings
+    MRI_VALIDATOR_THRESHOLD_MULTIPLIER = 1.0 

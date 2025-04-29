@@ -18,6 +18,7 @@ from utils.report_generator import generate_classification_report, generate_puri
 from models.classifier import AdversarialClassifier
 from models.purifier import Generator, PatchDiscriminator
 from models.attack_generator import fgsm_attack, bim_attack, pgd_attack
+from mri_validator import MRIValidator  # Import the MRI validator
 
 app = Flask(__name__)
 app.secret_key = 'adversarial-mri-defense-key'
@@ -30,8 +31,9 @@ os.makedirs(app.config['REPORT_FOLDER'], exist_ok=True)
 os.makedirs(os.path.dirname(app.config['CHECKPOINT_FOLDER']), exist_ok=True)
 os.makedirs(os.path.join(app.config['CHECKPOINT_FOLDER'], 'classifier'), exist_ok=True)
 os.makedirs(os.path.join(app.config['CHECKPOINT_FOLDER'], 'purifier'), exist_ok=True)
+os.makedirs(os.path.join(app.config['CHECKPOINT_FOLDER'], 'mri_validator'), exist_ok=True)  # Directory for MRI validator
 
-# Initialize models
+# Initialize device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
@@ -74,6 +76,17 @@ if os.path.exists(purifier_checkpoint_path):
 else:
     print(f"Warning: Purifier checkpoint not found at {purifier_checkpoint_path}")
 generator.eval()
+
+# Load MRI validator model
+mri_validator = None
+try:
+    mri_validator = MRIValidator()
+    validator_checkpoint_path = os.path.join(app.config['CHECKPOINT_FOLDER'], 'mri_validator', 'mri_validator_resnet18.pkl')
+    mri_validator.load(validator_checkpoint_path)
+    print(f"Loaded MRI validator from {validator_checkpoint_path}")
+except Exception as e:
+    print(f"Warning: Error loading MRI validator: {e}")
+    print("Running without MRI validation - all images will be processed")
 
 # Initialize transforms
 transform = transforms.Compose([
@@ -145,6 +158,24 @@ def upload_file():
         file.save(filepath)
         session.upload_path = filepath
         
+        # Validate if it's an MRI image
+        if mri_validator is not None:
+            try:
+                image = Image.open(filepath).convert('RGB')
+                is_mri, confidence, distance = mri_validator.is_brain_mri(image)
+                
+                if not is_mri:
+                    return jsonify({
+                        'success': False,
+                        'message': f'The uploaded image does not appear to be a brain MRI scan (confidence: {confidence:.2f}). Please upload a valid brain MRI image.'
+                    })
+                
+                print(f"MRI validation passed for {filename}: confidence={confidence:.2f}, distance={distance:.2f}")
+                    
+            except Exception as e:
+                print(f"Error in MRI validation: {str(e)}")
+                # Continue without validation if there's an error
+                
         return jsonify({
             'success': True,
             'session_id': session.session_id,
@@ -180,10 +211,23 @@ def classify_image():
         
         # Load and preprocess image
         image = Image.open(session.upload_path).convert('RGB')
-        image_tensor = transform(image).unsqueeze(0).to(device)
+        
+        # Validate if it's an MRI image (if validator is available)
+        if mri_validator is not None:
+            is_mri, confidence, distance = mri_validator.is_brain_mri(image)
+            
+            if not is_mri:
+                return jsonify({
+                    'success': False,
+                    'message': f'The uploaded image does not appear to be a brain MRI scan (confidence: {confidence:.2f}). Please upload a valid brain MRI image.'
+                })
+                
+            print(f"MRI validation passed: confidence={confidence:.2f}, distance={distance:.2f}")
         
         # Perform classification
-        with torch.no_grad():
+        image_tensor = transform(image).unsqueeze(0).to(device)
+        
+        with torch.no_grad():  #No Gradients as for inference only.
             # Get full outputs including attention weights
             outputs = classifier(image_tensor)
             
@@ -253,7 +297,7 @@ def classify_image():
             print(f"Warning: Error generating classification report: {str(e)}")
             # Continue without the report - we'll return success even if the report fails
         
-        return jsonify({
+        return jsonify({   #Client
             'success': True,
             'result_id': result_id,
             'predicted_class': predicted_class,
@@ -292,9 +336,22 @@ def purify_image():
             
         # Load and preprocess image
         image = Image.open(session.upload_path).convert('RGB')
-        image_tensor = transform(image).unsqueeze(0).to(device)
+        
+        # Validate if it's an MRI image (if validator is available)
+        if mri_validator is not None:
+            is_mri, confidence, distance = mri_validator.is_brain_mri(image)
+            
+            if not is_mri:
+                return jsonify({
+                    'success': False,
+                    'message': f'The uploaded image does not appear to be a brain MRI scan (confidence: {confidence:.2f}). Please upload a valid brain MRI image.'
+                })
+                
+            print(f"MRI validation passed: confidence={confidence:.2f}, distance={distance:.2f}")
         
         # Generate purified image
+        image_tensor = transform(image).unsqueeze(0).to(device)
+        
         with torch.no_grad():
             purified_tensor = generator(image_tensor)
             
@@ -417,10 +474,23 @@ def attack_image():
             
         # Load and preprocess image
         image = Image.open(session.upload_path).convert('RGB')
+        
+        # Validate if it's an MRI image (if validator is available)
+        if mri_validator is not None:
+            is_mri, confidence, distance = mri_validator.is_brain_mri(image)
+            
+            if not is_mri:
+                return jsonify({
+                    'success': False,
+                    'message': f'The uploaded image does not appear to be a brain MRI scan (confidence: {confidence:.2f}). Please upload a valid brain MRI image.'
+                })
+                
+            print(f"MRI validation passed: confidence={confidence:.2f}, distance={distance:.2f}")
+        
+        # Perform the chosen attack
         image_tensor = transform(image).unsqueeze(0).to(device)
         image_tensor.requires_grad = True
         
-        # Perform the chosen attack
         if attack_type == 'fgsm':
             adversarial_tensor = fgsm_attack(image_tensor, epsilon)
         elif attack_type == 'bim':
@@ -549,6 +619,7 @@ def attack_image():
             'message': f'Error processing image: {str(e)}'
         })
 
+# Remaining routes stay the same...
 @app.route('/get_image/<session_id>/<filename>')
 def get_image(session_id, filename):
     if session_id not in sessions:

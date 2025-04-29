@@ -10,11 +10,11 @@ from matplotlib.figure import Figure
 
 def preprocess_image(image_path, target_size=(224, 224)):
     """
-    Load and preprocess an image for model input
+    Load and preprocess an image for model input - UPDATED with BICUBIC interpolation
     """
     image = Image.open(image_path).convert('RGB')
     transform = transforms.Compose([
-        transforms.Resize(target_size),
+        transforms.Resize(target_size, interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.ToTensor(),
     ])
     return transform(image).unsqueeze(0)
